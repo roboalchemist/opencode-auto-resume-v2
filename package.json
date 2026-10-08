@@ -1,0 +1,46 @@
+{
+  "name": "opencode-auto-resume-v2",
+  "version": "0.1.0",
+  "description": "OpenCode v2 plugin adapter for opencode-auto-resume (stall detection + auto-continue). Runs the unchanged v1 recovery engine on OpenCode 2.x.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-v2",
+    "auto-resume",
+    "stall-detection",
+    "llm",
+    "plugin"
+  ],
+  "homepage": "https://github.com/roboalchemist/opencode-auto-resume-v2#readme",
+  "bugs": {
+    "url": "https://github.com/roboalchemist/opencode-auto-resume-v2/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/roboalchemist/opencode-auto-resume-v2.git"
+  },
+  "license": "GPL-3.0-or-later",
+  "author": "roboalchemist",
+  "type": "module",
+  "main": "opencode-auto-resume-v2.ts",
+  "exports": {
+    ".": "./opencode-auto-resume-v2.ts",
+    "./server": "./opencode-auto-resume-v2.ts"
+  },
+  "files": [
+    "opencode-auto-resume-v2.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "opencode-auto-resume": "^1.1.21",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}
