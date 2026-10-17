@@ -35,9 +35,22 @@ function translateEvent(ev: any): LegacyEvent[] {
   }
 }
 
+// OpenCode loads a plugin once per location/workspace inside the same server
+// process. Each load would otherwise start its own v1 engine, event loop and
+// stall detector — N engines then all fire "continue" prompts for the same
+// stall, and each prompt interrupts whatever tool call is in flight (the
+// "non-stop Tool execution interrupted" storm). Only the first instance in a
+// process may run the engine; later loads become no-ops.
+let instanceActive = false
+
 export default {
   id: "opencode-auto-resume-v2",
   setup: async (context: any) => {
+    if (instanceActive) {
+      console.error("[auto-resume-v2] duplicate instance in this process - skipping (singleton)")
+      return () => {}
+    }
+    instanceActive = true
     const abort = new AbortController()
 
     const bridgeClient = {
@@ -92,6 +105,7 @@ export default {
       hooks = await (AutoResumePlugin as any)(legacyCtx, context.options ?? {})
     } catch (e) {
       console.error("[auto-resume-v2] construction failed:", e)
+      instanceActive = false
       return () => {}
     }
 
@@ -184,6 +198,7 @@ export default {
     })()
 
     return () => {
+      instanceActive = false
       abort.abort()
     }
   },

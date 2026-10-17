@@ -1,6 +1,6 @@
 {
   "name": "opencode-auto-resume-v2",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenCode v2 plugin adapter for opencode-auto-resume (stall detection + auto-continue). Runs the unchanged v1 recovery engine on OpenCode 2.x.",
   "keywords": [
     "opencode",
