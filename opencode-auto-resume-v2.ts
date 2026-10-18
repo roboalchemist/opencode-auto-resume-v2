@@ -1,39 +1,13 @@
 import { z } from "zod"
 import AutoResumePlugin from "opencode-auto-resume"
-
-type LegacyEvent = { type: string; properties?: Record<string, any> }
-
-function translateEvent(ev: any): LegacyEvent[] {
-  const type: string = ev?.type ?? ""
-  const data: Record<string, any> = ev?.data ?? {}
-  const sid: string | undefined = data.sessionID
-  const props = { ...data, sessionID: sid }
-
-  switch (type) {
-    case "session.execution.started":
-      return [{ type: "session.status", properties: { sessionID: sid, status: { type: "busy" } } }]
-    case "session.execution.succeeded":
-      return [
-        { type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } },
-        { type: "session.idle", properties: { sessionID: sid } },
-      ]
-    case "session.execution.failed":
-      return [
-        { type: "session.error", properties: { sessionID: sid, error: data.error } },
-        { type: "session.status", properties: { sessionID: sid, status: { type: "idle" } } },
-      ]
-    case "session.execution.interrupted":
-      return [{ type: "session.interrupted", properties: { sessionID: sid } }]
-    case "session.created":
-      return [{ type: "session.created", properties: { sessionID: sid, parentID: data.parentID, session: data } }]
-    case "session.updated":
-    case "session.renamed":
-      return [{ type: "session.updated", properties: { sessionID: sid } }]
-    default:
-      if (sid) return [{ type: "message.updated", properties: props }]
-      return []
-  }
-}
+import {
+  DEFAULT_CONTINUE_PROMPT,
+  createState,
+  normalizeMessages,
+  noteSelfAbort,
+  statusSnapshot,
+  translateEvent,
+} from "./adapter"
 
 // OpenCode loads a plugin once per location/workspace inside the same server
 // process. Each load would otherwise start its own v1 engine, event loop and
@@ -51,7 +25,10 @@ export default {
       return () => {}
     }
     instanceActive = true
+
+    const state = createState()
     const abort = new AbortController()
+    const sessionIDOf = (input: any) => input?.path?.id ?? input?.sessionID
 
     const bridgeClient = {
       app: {
@@ -67,25 +44,52 @@ export default {
           const text = Array.isArray(body.parts)
             ? body.parts.map((p: any) => p?.text ?? "").join("")
             : (body.text ?? "")
-          const req: any = { sessionID: input?.path?.id ?? input?.sessionID, text }
+          const req: any = { sessionID: sessionIDOf(input), text }
           const agent = body.agent ?? body.agents?.[0]?.name
           if (agent) req.agents = [{ name: agent }]
           return await context.session.prompt(req)
         },
-        abort: async (input: any) => context.session.interrupt({ sessionID: input?.path?.id ?? input?.sessionID }),
-        interrupt: async (input: any) => context.session.interrupt({ sessionID: input?.path?.id ?? input?.sessionID }),
-        messages: async (input: any) => ({ data: await context.session.context({ sessionID: input?.path?.id ?? input?.sessionID }) }),
-        context: async (input: any) => ({ data: await context.session.context({ sessionID: input?.path?.id ?? input?.sessionID }) }),
-        status: async () => ({ data: {} }),
+        abort: async (input: any) => {
+          const sessionID = sessionIDOf(input)
+          noteSelfAbort(state, sessionID)
+          return context.session.interrupt({ sessionID })
+        },
+        interrupt: async (input: any) => {
+          const sessionID = sessionIDOf(input)
+          noteSelfAbort(state, sessionID)
+          return context.session.interrupt({ sessionID })
+        },
+        messages: async (input: any) => ({
+          data: normalizeMessages(await context.session.context({ sessionID: sessionIDOf(input) })),
+        }),
+        context: async (input: any) => ({
+          data: normalizeMessages(await context.session.context({ sessionID: sessionIDOf(input) })),
+        }),
+        status: async () => ({ data: statusSnapshot(state) }),
         list: async () => ({ data: [] }),
         todo: async () => ({ data: [] }),
         summarize: async () => undefined,
         command: async (input: any) =>
           context.session.command({
-            sessionID: input?.path?.id ?? input?.sessionID,
+            sessionID: sessionIDOf(input),
             command: input?.body?.command ?? "",
             text: input?.body?.arguments ?? input?.body?.text ?? "",
           }),
+      },
+      tool: {
+        // Lets the engine's unknown-tool detection see the real tool list.
+        ids: async () => {
+          try {
+            const result = await context.tool.list()
+            const list = Array.isArray(result) ? result : (result?.data ?? result?.tools ?? [])
+            const ids = (Array.isArray(list) ? list : [])
+              .map((tool: any) => (typeof tool === "string" ? tool : tool?.name))
+              .filter((name: any) => typeof name === "string" && name.length > 0)
+            return { data: ids }
+          } catch {
+            return { data: [] }
+          }
+        },
       },
       config: { get: async () => ({ data: {} }) },
       provider: { get: async () => ({ data: {} }) },
@@ -102,7 +106,10 @@ export default {
 
     let hooks: any
     try {
-      hooks = await (AutoResumePlugin as any)(legacyCtx, context.options ?? {})
+      hooks = await (AutoResumePlugin as any)(legacyCtx, {
+        continuePrompt: DEFAULT_CONTINUE_PROMPT,
+        ...(context.options ?? {}),
+      })
     } catch (e) {
       console.error("[auto-resume-v2] construction failed:", e)
       instanceActive = false
@@ -184,7 +191,7 @@ export default {
               continue
             }
           }
-          for (const legacyEvent of translateEvent(ev)) {
+          for (const legacyEvent of translateEvent(state, ev)) {
             try {
               await hooks?.event?.({ event: legacyEvent })
             } catch (e) {
